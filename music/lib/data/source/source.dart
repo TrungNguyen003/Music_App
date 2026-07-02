@@ -20,8 +20,13 @@ class RemoteDataSource implements DataSource {
         final jsonData = jsonDecode(bodyContent) as Map;
         final songList = (jsonData['songs'] as List?) ?? [];
         
+        print('API Response: ${response.body}');
+        
         List<Song> songs = songList
-            .map((song) => Song.fromJson(song as Map<String, dynamic>))
+            .map((song) {
+              print('Song data: $song');
+              return Song.fromJson(song as Map<String, dynamic>);
+            })
             .toList();
         return songs;
       } else {

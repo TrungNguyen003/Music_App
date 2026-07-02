@@ -4,6 +4,8 @@ import 'package:msapp/ui/discovery/discovery.dart';
 import 'package:msapp/ui/home/viewmodel.dart';
 import 'package:msapp/ui/settings/settings.dart';
 import 'package:msapp/ui/user/user.dart';
+import 'package:msapp/ui/mini_player/mini_player.dart';
+import 'package:msapp/ui/now_playing/audio_player_manager.dart';
 import '../../data/model/song.dart';
 import '../now_playing/playing.dart';
 
@@ -96,13 +98,64 @@ class _HomeTabPageState extends State<HomeTabPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: getBody(),
+      body: Stack(
+        children: [
+          SafeArea(
+            bottom: false,
+            child: getBody(),
+          ),
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: StreamBuilder<Song?>(
+              stream: AudioPlayerManager().currentSongStream,
+              builder: (context, currentSongSnapshot) {
+                return StreamBuilder<bool>(
+                  stream: _viewModel.isPlayingStream.stream,
+                  builder: (context, isPlayingSnapshot) {
+                    return MiniPlayer(
+                      currentSong: currentSongSnapshot.data,
+                      isPlaying: isPlayingSnapshot.data ?? false,
+                      onPlayPause: () async {
+                        _viewModel.togglePlayPause();
+                        if (_viewModel.isPlaying) {
+                          await AudioPlayerManager().player.play();
+                        } else {
+                          await AudioPlayerManager().player.pause();
+                        }
+                        setState(() {});
+                      },
+                      onTap: () {
+                        if (currentSongSnapshot.data != null) {
+                          navigate(currentSongSnapshot.data!);
+                        }
+                      },
+                      onClose: () async {
+                        await AudioPlayerManager().stop();
+                        _viewModel.stopSong();
+                        setState(() {});
+                      },
+                      onNext: () {
+                        AudioPlayerManager().playNext();
+                      },
+                      onPrevious: () {
+                        AudioPlayerManager().playPrevious();
+                      },
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   @override
   void dispose() {
-    _viewModel.songStream.close();
+    _viewModel.dispose();
     super.dispose();
   }
 
@@ -135,7 +188,7 @@ class _HomeTabPageState extends State<HomeTabPage> {
         );
       },
       itemCount: songs.length,
-      shrinkWrap: true,
+      padding: const EdgeInsets.only(top: 20, bottom: 80),
     );
   }
 
@@ -154,41 +207,42 @@ class _HomeTabPageState extends State<HomeTabPage> {
     });
   }
 
-  void showBottomSheet (){
-    showModalBottomSheet(context: context, builder: (context){
-      return ClipRRect(
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-        child: Container(
-          height: 400,
-          color: Colors.grey,
-          child: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                const Text('Model bottom sheet'),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text('close bottom sheet'),
-
-                )
-              ],
+  void showBottomSheet() {
+    showModalBottomSheet(
+        context: context,
+        builder: (context) {
+          return ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            child: Container(
+              height: 400,
+              color: Colors.grey,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    const Text('Model bottom sheet'),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: Text('close bottom sheet'),
+                    )
+                  ],
+                ),
+              ),
             ),
-          ),
-        ),
-      );
-    });
+          );
+        });
   }
 
-  void navigate(Song song){
-    Navigator.push(context,
-      CupertinoPageRoute(builder: (context){
-        return NowPlaying(
-          songs: songs,
-          playingSong: song,
-        );
-      })
-    );
+  void navigate(Song song) {
+    _viewModel.playSong(song);
+    AudioPlayerManager().player.play();
+    Navigator.push(context, CupertinoPageRoute(builder: (context) {
+      return NowPlaying(
+        songs: songs,
+        playingSong: song,
+      );
+    }));
   }
 }
 
@@ -203,6 +257,7 @@ class _SongItemSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    print('Song image URL: ${song.image}');
     return ListTile(
       contentPadding: const EdgeInsets.only(
         left: 24,
@@ -210,16 +265,33 @@ class _SongItemSection extends StatelessWidget {
       ),
       leading: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: FadeInImage.assetNetwork(
-          placeholder: 'assets/hinhnen.jpg',
-          image: song.image,
+        child: Image.network(
+          'http://localhost:3000/api/image?url=${Uri.encodeComponent(song.image)}',
           width: 48,
           height: 48,
-          imageErrorBuilder: (context, error, stackTrace) {
+          fit: BoxFit.cover,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return Container(
+              width: 48,
+              height: 48,
+              color: Colors.grey[300],
+              child: const Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            );
+          },
+          errorBuilder: (context, error, stackTrace) {
+            print('Error loading image $error');
             return Image.asset(
               'assets/hinhnen.jpg',
               width: 48,
               height: 48,
+              fit: BoxFit.cover,
             );
           },
         ),
@@ -234,7 +306,7 @@ class _SongItemSection extends StatelessWidget {
           parent.showBottomSheet();
         },
       ),
-      onTap: (){
+      onTap: () {
         parent.navigate(song);
       },
     );

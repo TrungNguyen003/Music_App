@@ -2,9 +2,13 @@ import 'package:audio_video_progress_bar/audio_video_progress_bar.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 import '../../data/model/song.dart';
+import '../../data/user_manager.dart';
 import 'audio_player_manager.dart';
+import '../user/user.dart';
 
 class NowPlaying extends StatelessWidget {
   const NowPlaying({super.key, required this.playingSong, required this.songs});
@@ -36,6 +40,9 @@ class _NowPlayingPageState extends State<NowPlayingPage>
     with SingleTickerProviderStateMixin {
   late AnimationController _imageAnimationController;
   late AudioPlayerManager _audioPlayerManager;
+  Song? _currentSong;
+  bool _isShuffleEnabled = false;
+  bool _isFavorite = false;
 
   @override
   void initState() {
@@ -44,13 +51,66 @@ class _NowPlayingPageState extends State<NowPlayingPage>
       vsync: this,
       duration: const Duration(milliseconds: 12000),
     );
-    _audioPlayerManager =
-        AudioPlayerManager(songUrl: widget.playingSong.source);
-    _audioPlayerManager.init();
+    _audioPlayerManager = AudioPlayerManager();
+    _currentSong = widget.playingSong;
+    final index = widget.songs.indexOf(widget.playingSong);
+    _audioPlayerManager.init(widget.songs, index);
+    _imageAnimationController.repeat();
+    
+    _audioPlayerManager.currentSongStream.listen((song) {
+      if (mounted) {
+        setState(() {
+          _currentSong = song;
+          _checkFavorite();
+        });
+      }
+    });
+    _checkFavorite();
+  }
+
+  Future<void> _checkFavorite() async {
+    if (UserManager.loggedInEmail == null || _currentSong == null) return;
+    try {
+      final response = await http.get(Uri.parse('http://localhost:3000/api/favorites/${UserManager.loggedInEmail}'));
+      if (response.statusCode == 200) {
+        final List<dynamic> favorites = jsonDecode(response.body);
+        setState(() {
+          _isFavorite = favorites.contains(_currentSong!.id);
+        });
+      }
+    } catch (e) {
+      print('Error checking favorite: $e');
+    }
+  }
+
+  Future<void> _toggleFavorite() async {
+    if (UserManager.loggedInEmail == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Vui lòng đăng nhập để yêu thích')));
+      return;
+    }
+    
+    try {
+      final response = await http.post(
+        Uri.parse('http://localhost:3000/api/favorites'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': UserManager.loggedInEmail, 'songId': _currentSong!.id}),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        setState(() {
+          _isFavorite = data['isFavorite'];
+        });
+      }
+    } catch (e) {
+      print('Error toggling favorite: $e');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_currentSong == null) return const SizedBox.shrink();
+    
     final screenWidth = MediaQuery.of(context).size.width;
     const delta = 64;
     final radius = (screenWidth - delta) / 2;
@@ -64,24 +124,27 @@ class _NowPlayingPageState extends State<NowPlayingPage>
           ),
         ),
         child: Scaffold(
-          body: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(widget.playingSong.album),
-                const SizedBox(height: 16),
-                Text('_ ___ _'),
-                const SizedBox(
-                  height: 48,
-                ),
-                RotationTransition(
+          body: SingleChildScrollView(
+           child: Padding(
+             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+             child: Column(
+               mainAxisAlignment: MainAxisAlignment.start,
+               crossAxisAlignment: CrossAxisAlignment.center,
+               children: [
+               Text(_currentSong!.album),
+               const SizedBox(height: 16),
+               Text('_ ___ _'),
+               const SizedBox(
+                 height: 48,
+               ),
+               RotationTransition(
                   turns: Tween(begin: 0.0, end: 1.0)
                       .animate(_imageAnimationController),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(radius),
                     child: FadeInImage.assetNetwork(
                       placeholder: 'assets/hinhnen.jpg',
-                      image: widget.playingSong.image,
+                       image: 'http://localhost:3000/api/image?url=${Uri.encodeComponent(_currentSong!.image)}',
                       width: screenWidth - delta,
                       height: screenWidth - delta,
                       imageErrorBuilder: (context, error, stackTrace) {
@@ -108,7 +171,7 @@ class _NowPlayingPageState extends State<NowPlayingPage>
                         Column(
                           children: [
                             Text(
-                              widget.playingSong.title,
+                              _currentSong!.title,
                               style: Theme.of(context)
                                   .textTheme
                                   .bodyMedium!
@@ -120,7 +183,7 @@ class _NowPlayingPageState extends State<NowPlayingPage>
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              widget.playingSong.artist,
+                              _currentSong!.artist,
                               style: Theme.of(context)
                                   .textTheme
                                   .bodyMedium!
@@ -133,11 +196,11 @@ class _NowPlayingPageState extends State<NowPlayingPage>
                           ],
                         ),
                         IconButton(
-                          onPressed: () {},
-                          icon: const Icon(
-                            Icons.favorite_outline,
+                          onPressed: _toggleFavorite,
+                          icon: Icon(
+                            _isFavorite ? Icons.favorite : Icons.favorite_outline,
+                            color: _isFavorite ? Colors.red : Theme.of(context).colorScheme.primary,
                           ),
-                          color: Theme.of(context).colorScheme.primary,
                         ),
                       ],
                     ),
@@ -161,40 +224,10 @@ class _NowPlayingPageState extends State<NowPlayingPage>
                   child: _mediaButtons(),
                 ),
               ],
-            ),
-          ),
+             ),
+           ),
+         ),
         ));
-  }
-
-  Widget _mediaButtons() {
-    return SizedBox(
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          MediaButtonControl(
-              function: null,
-              icon: Icons.shuffle,
-              color: Colors.deepPurple,
-              size: 24),
-          MediaButtonControl(
-              function: null,
-              icon: Icons.skip_previous,
-              color: Colors.deepPurple,
-              size: 36),
-          _playButton(),
-          MediaButtonControl(
-              function: null,
-              icon: Icons.skip_next,
-              color: Colors.deepPurple,
-              size: 36),
-          MediaButtonControl(
-              function: null,
-              icon: Icons.repeat,
-              color: Colors.deepPurple,
-              size: 24)
-        ],
-      ),
-    );
   }
 
   StreamBuilder<DurationState> _progressBar() {
@@ -203,10 +236,8 @@ class _NowPlayingPageState extends State<NowPlayingPage>
         builder: (context, snapshot) {
           final durationState = snapshot.data;
           final progress = durationState?.progress ?? Duration.zero;
-          // final buffered = durationState?.buffered ?? Duration.zero;
           final total = durationState?.total ?? Duration.zero;
-          return ProgressBar(progress: progress, total: total
-          );
+          return ProgressBar(progress: progress, total: total);
         });
   }
 
@@ -245,6 +276,48 @@ class _NowPlayingPageState extends State<NowPlayingPage>
           }, icon: Icons.replay, color: null, size: 48);
         }
       },
+    );
+  }
+
+  Widget _mediaButtons() {
+    return SizedBox(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          MediaButtonControl(
+              function: () {
+                setState(() {
+                  _isShuffleEnabled = !_isShuffleEnabled;
+                });
+                _audioPlayerManager.setShuffleMode(_isShuffleEnabled);
+              },
+              icon: Icons.shuffle,
+              color: _isShuffleEnabled ? Colors.deepPurple : Colors.grey,
+              size: 24),
+          MediaButtonControl(
+              function: () {
+                _audioPlayerManager.playPrevious();
+              },
+              icon: Icons.skip_previous,
+              color: Colors.deepPurple,
+              size: 36),
+          _playButton(),
+          MediaButtonControl(
+              function: () {
+                _audioPlayerManager.playNext();
+              },
+              icon: Icons.skip_next,
+              color: Colors.deepPurple,
+              size: 36),
+          MediaButtonControl(
+              function: () {
+                _audioPlayerManager.setRepeatMode(LoopMode.one);
+              },
+              icon: Icons.repeat,
+              color: Colors.deepPurple,
+              size: 24)
+        ],
+      ),
     );
   }
 }
